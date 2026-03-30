@@ -123,35 +123,57 @@ const physicalImageUrl = `https://image.pollinations.ai/prompt/${encodeURICompon
 
   const loadData = async () => {
     try {
-      const [profileRes, resultsRes, remediesRes] = await Promise.all([
+      // Use allSettled so one failure doesn't crash the whole dashboard
+      const [profileRes, resultsRes, remediesRes] = await Promise.allSettled([
         parentAPI.getChildProfile(),
         parentAPI.getTestResults(),
         parentAPI.getRemedies(),
       ]);
-      
-      setProfile(profileRes.data);
-      const results = resultsRes.data.test_results || [];
+
+      // Handle profile — backend returns 200 even if child isn't registered yet
+      if (profileRes.status === 'fulfilled') {
+        const profileData = profileRes.value.data;
+        if (profileData.child_linked === false) {
+          // Parent has no APAAR ID set at all
+          setProfile({ _noChild: true, message: 'No child APAAR ID linked to your account.' });
+        } else if (profileData.child_registered === false) {
+          // APAAR ID set but student hasn't registered yet
+          setProfile({
+            _noChild: true,
+            apaar_id: profileData.apaar_id,
+            message: profileData.message || 'Your child has not registered yet.',
+          });
+        } else {
+          setProfile(profileData);
+        }
+      } else {
+        // Fallback for unexpected errors
+        setProfile({ _noChild: true, message: 'Could not load child profile.' });
+      }
+
+      const results = resultsRes.status === 'fulfilled'
+        ? (resultsRes.value.data.test_results || [])
+        : [];
       setTestResults(results);
-      
-      // Organize data by semesters (2 tests per semester)
+
       const organized = organizeBySemester(results);
       setSemesterData(organized);
-      
-      // Extract actual remedies from database
-      await extractActualRemedies(remediesRes.data.remedies || [], results);
-      
-      // Generate trend insights
+
+      const remediesData = remediesRes.status === 'fulfilled'
+        ? (remediesRes.value.data.remedies || [])
+        : [];
+
+      await extractActualRemedies(remediesData, results);
       generateTrendInsights(organized);
-      
-      // Generate health summary with AI images
-      generateHealthSummary(results, remediesRes.data.remedies || []);
-      
+      generateHealthSummary(results, remediesData);
+
     } catch (error) {
-      Alert.alert('Error', 'Failed to load dashboard data');
+      console.error('loadData error:', error);
     } finally {
       setLoading(false);
     }
   };
+
 
   const organizeBySemester = (results) => {
     const semesters = [];
@@ -382,6 +404,39 @@ const physicalImageUrl = `https://image.pollinations.ai/prompt/${encodeURICompon
     );
   }
 
+  // If child is not linked / not registered yet, show a helpful screen
+  if (profile?._noChild) {
+    return (
+      <View style={styles.container}>
+        <LinearGradient
+          colors={[colors.primary || '#1E3A8A', colors.primaryDark || '#1E40AF']}
+          style={styles.headerGradient}
+        >
+          <View style={styles.header}>
+            <Text style={styles.greeting}>Parent Dashboard</Text>
+            <Text style={styles.childName}>Welcome!</Text>
+          </View>
+        </LinearGradient>
+        <View style={styles.noChildContainer}>
+          <Text style={styles.noChildIcon}>👶</Text>
+          <Text style={styles.noChildTitle}>No Child Linked</Text>
+          <Text style={styles.noChildMessage}>{profile.message}</Text>
+          {profile.apaar_id ? (
+            <View style={styles.noChildApaarBadge}>
+              <Ionicons name="card-outline" size={16} color={colors.primary} />
+              <Text style={styles.noChildApaarText}>
+                Your APAAR ID: {profile.apaar_id}
+              </Text>
+            </View>
+          ) : null}
+          <Text style={styles.noChildHint}>
+            Ask your child to sign up using the same APAAR ID you entered.
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
   const currentSemester = semesterData[selectedSemester];
 
   return (
@@ -406,6 +461,7 @@ const physicalImageUrl = `https://image.pollinations.ai/prompt/${encodeURICompon
           </View>
         </View>
       </LinearGradient>
+
 
       <ScrollView 
         style={styles.scrollView}
@@ -1351,5 +1407,51 @@ const styles = StyleSheet.create({
     ...typography.h4,
     color: colors.white,
     flex: 1,
+  },
+  // No-child-linked screen
+  noChildContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xxxl,
+  },
+  noChildIcon: {
+    fontSize: 72,
+    marginBottom: spacing.lg,
+  },
+  noChildTitle: {
+    ...typography.h2,
+    color: colors.textPrimary,
+    marginBottom: spacing.md,
+    textAlign: 'center',
+  },
+  noChildMessage: {
+    ...typography.body,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: spacing.lg,
+  },
+  noChildApaarBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.primary + '15',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.full,
+    marginBottom: spacing.lg,
+    gap: spacing.xs,
+  },
+  noChildApaarText: {
+    ...typography.body,
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  noChildHint: {
+    ...typography.bodySmall,
+    color: colors.textTertiary,
+    textAlign: 'center',
+    lineHeight: 20,
+    fontStyle: 'italic',
   },
 });

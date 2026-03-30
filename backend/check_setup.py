@@ -24,7 +24,8 @@ def check_dependencies():
     
     for package in required:
         try:
-            __import__(package.replace('-', '_'))
+            import_name = 'jose' if package == 'python-jose' else package.replace('-', '_')
+            __import__(import_name)
             print(f"✓ {package}")
         except ImportError:
             print(f"✗ {package} (missing)")

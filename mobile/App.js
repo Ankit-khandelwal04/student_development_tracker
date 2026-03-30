@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -8,6 +9,7 @@ import StudentNavigator from './src/navigation/StudentNavigator';
 import TeacherNavigator from './src/navigation/TeacherNavigator';
 import ParentNavigator from './src/navigation/ParentNavigator';
 import { AuthContext } from './src/context/AuthContext';
+import { setSignOutCallback } from './src/api/client';
 
 const Stack = createStackNavigator();
 
@@ -17,14 +19,32 @@ export default function App() {
   const [apaarId, setApaarId] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // signOut defined early so it can be registered with the API client
+  const signOut = async () => {
+    try {
+      await AsyncStorage.removeItem('userToken');
+      await AsyncStorage.removeItem('userRole');
+      await AsyncStorage.removeItem('apaarId');
+
+      setUserToken(null);
+      setUserRole(null);
+      setApaarId(null);
+    } catch (e) {
+      console.error('Failed to remove user data', e);
+    }
+  };
+
   useEffect(() => {
+    // Register the signOut callback so the Axios 401 interceptor can trigger it
+    setSignOutCallback(signOut);
+
     // Check if user is already logged in
     const bootstrapAsync = async () => {
       try {
         const token = await AsyncStorage.getItem('userToken');
         const role = await AsyncStorage.getItem('userRole');
         const id = await AsyncStorage.getItem('apaarId');
-        
+
         if (token && role) {
           setUserToken(token);
           setUserRole(role);
@@ -46,7 +66,7 @@ export default function App() {
           await AsyncStorage.setItem('userToken', token);
           await AsyncStorage.setItem('userRole', role);
           if (id) await AsyncStorage.setItem('apaarId', id);
-          
+
           setUserToken(token);
           setUserRole(role);
           setApaarId(id);
@@ -54,19 +74,7 @@ export default function App() {
           console.error('Failed to save user data', e);
         }
       },
-      signOut: async () => {
-        try {
-          await AsyncStorage.removeItem('userToken');
-          await AsyncStorage.removeItem('userRole');
-          await AsyncStorage.removeItem('apaarId');
-          
-          setUserToken(null);
-          setUserRole(null);
-          setApaarId(null);
-        } catch (e) {
-          console.error('Failed to remove user data', e);
-        }
-      },
+      signOut,
       userToken,
       userRole,
       apaarId,
@@ -75,7 +83,11 @@ export default function App() {
   );
 
   if (isLoading) {
-    return null; // Or a loading screen
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#1E3A8A" />
+      </View>
+    );
   }
 
   const getRoleNavigator = () => {
@@ -110,3 +122,12 @@ export default function App() {
     </AuthContext.Provider>
   );
 }
+
+const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+  },
+});

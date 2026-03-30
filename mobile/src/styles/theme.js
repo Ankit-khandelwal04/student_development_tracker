@@ -29,6 +29,7 @@ export const colors = {
   textSecondary: '#475569',
   textTertiary: '#64748B',
   textDisabled: '#94A3B8',
+  textLight: '#94A3B8', // alias for textDisabled — kept for backward compat
   
   // Status colors
   success: '#059669',

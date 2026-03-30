@@ -46,7 +46,9 @@ export default function UploadPhysicalScreen({ route, navigation }) {
 
   const loadExistingData = async () => {
     try {
-      const response = await teacherAPI.getPhysicalTest(studentApaarId);
+      // Normalize APAAR ID before using in URL — spaces break HTTP requests
+      const normalizedId = (studentApaarId || '').replace(/\s+/g, '').toUpperCase();
+      const response = await teacherAPI.getPhysicalTest(normalizedId);
       console.log('📊 Physical Test Response:', JSON.stringify(response.data, null, 2));
       
       if (response.data.has_data) {
@@ -75,13 +77,17 @@ export default function UploadPhysicalScreen({ route, navigation }) {
     }
   };
 
+
   const handleInputChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
   const buildPayload = () => {
+    // Normalize APAAR ID — strip all spaces to match backend format
+    const normalizedApaarId = (studentApaarId || '').replace(/\s+/g, '').toUpperCase();
+
     const payload = {
-      apaar_id: studentApaarId,
+      apaar_id: normalizedApaarId,
       test_type: 'physical',
     };
 
@@ -94,11 +100,12 @@ export default function UploadPhysicalScreen({ route, navigation }) {
     if (formData.systolic_bp) payload.systolic_bp = parseInt(formData.systolic_bp);
     if (formData.diastolic_bp) payload.diastolic_bp = parseInt(formData.diastolic_bp);
     if (formData.sleep_hours) payload.sleep_hours = parseFloat(formData.sleep_hours);
-    if (formData.health_notes) payload.notes = formData.health_notes;
+    if (formData.health_notes) payload.health_notes = formData.health_notes;
 
     console.log('📤 Sending payload:', JSON.stringify(payload, null, 2));
     return payload;
   };
+
 
   const handleSubmit = async () => {
     if (!formData.bmi || !formData.fitness_score) {

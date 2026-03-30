@@ -36,29 +36,60 @@ export default function SignupScreen({ navigation }) {
       return;
     }
 
+    if (formData.password.length < 6) {
+      Alert.alert('Error', 'Password must be at least 6 characters');
+      return;
+    }
+
+    // Normalize APAAR ID — strip spaces before sending (matches backend normalization)
+    const cleanedApaarId = formData.apaar_id
+      ? formData.apaar_id.replace(/\s+/g, '').toUpperCase()
+      : '';
+
     setLoading(true);
     try {
-      const response = await authAPI.signup(formData);
+      const payload = { ...formData, apaar_id: cleanedApaarId };
+      const response = await authAPI.signup(payload);
       console.log('Signup response:', response.data);
-      Alert.alert('Success', 'Account created successfully', [
-        { text: 'OK', onPress: () => navigation.navigate('Login') },
-      ]);
+      Alert.alert(
+        'Account Created! 🎉',
+        'Your account has been created successfully. Please login.',
+        [{ text: 'Go to Login', onPress: () => navigation.navigate('Login') }]
+      );
     } catch (error) {
       console.error('Signup error:', error);
-      console.error('Error response:', error.response);
-      
-      let errorMessage = 'An error occurred';
-      if (error.response?.data?.detail) {
-        errorMessage = error.response.data.detail;
-      } else if (error.message) {
-        errorMessage = error.message;
+
+      const status = error.response?.status;
+      const detail = error.response?.data?.detail;
+
+      let title = 'Signup Failed';
+      let message = 'Something went wrong. Please try again.';
+
+      if (!error.response) {
+        // Network error — can't reach server
+        title = 'Connection Error';
+        message = 'Cannot reach the server. Make sure the backend is running and try again.';
+      } else if (status === 400 && detail === 'Email already registered') {
+        title = 'Email Already Registered';
+        message = 'This email is already in use. Please login instead, or use a different email.';
+      } else if (status === 422) {
+        title = 'Invalid Input';
+        message = 'Please check all fields and try again. ' + (detail || '');
+      } else if (detail) {
+        message = detail;
       }
-      
-      Alert.alert('Signup Failed', errorMessage);
+
+      Alert.alert(title, message, [
+        ...(status === 400 && detail === 'Email already registered'
+          ? [{ text: 'Go to Login', onPress: () => navigation.navigate('Login') }]
+          : []),
+        { text: 'OK' },
+      ]);
     } finally {
       setLoading(false);
     }
   };
+
 
   return (
     <KeyboardAvoidingView
@@ -80,7 +111,7 @@ export default function SignupScreen({ navigation }) {
               <TextInput
                 style={styles.input}
                 placeholder="Full Name"
-                placeholderTextColor={colors.textLight}
+                placeholderTextColor={colors.textDisabled}
                 value={formData.full_name}
                 onChangeText={(text) => setFormData({ ...formData, full_name: text })}
               />
@@ -90,7 +121,7 @@ export default function SignupScreen({ navigation }) {
               <TextInput
                 style={styles.input}
                 placeholder="Email"
-                placeholderTextColor={colors.textLight}
+                placeholderTextColor={colors.textDisabled}
                 value={formData.email}
                 onChangeText={(text) => setFormData({ ...formData, email: text })}
                 autoCapitalize="none"
@@ -102,7 +133,7 @@ export default function SignupScreen({ navigation }) {
               <TextInput
                 style={styles.input}
                 placeholder="Password"
-                placeholderTextColor={colors.textLight}
+                placeholderTextColor={colors.textDisabled}
                 value={formData.password}
                 onChangeText={(text) => setFormData({ ...formData, password: text })}
                 secureTextEntry
@@ -142,7 +173,7 @@ export default function SignupScreen({ navigation }) {
                       ? 'Your APAAR ID'
                       : "Child's APAAR ID (optional)"
                   }
-                  placeholderTextColor={colors.textLight}
+                  placeholderTextColor={colors.textDisabled}
                   value={formData.apaar_id}
                   onChangeText={(text) => setFormData({ ...formData, apaar_id: text })}
                 />
@@ -156,7 +187,7 @@ export default function SignupScreen({ navigation }) {
               activeOpacity={0.8}
             >
               <LinearGradient
-                colors={loading ? [colors.textLight, colors.textLight] : [colors.primary, colors.primaryDark]}
+                colors={loading ? [colors.textDisabled, colors.textDisabled] : [colors.primary, colors.primaryDark]}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
                 style={styles.buttonGradient}

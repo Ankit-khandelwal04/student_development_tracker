@@ -617,50 +617,6 @@ const styles = StyleSheet.create({
     color: colors.white,
     opacity: 0.9,
   },
-  healthCard: {
-    ...card,
-    padding: spacing.lg,
-    marginBottom: spacing.md,
-  },
-  healthCardTitle: {
-    ...typography.h3,
-    color: colors.textPrimary,
-    marginBottom: spacing.md,
-  },
-  metricsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginHorizontal: -spacing.xs,
-  },
-  metricItem: {
-    width: '50%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: spacing.xs,
-    marginBottom: spacing.sm,
-  },
-  metricIconContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: borderRadius.md,
-    backgroundColor: colors.primary + '15',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: spacing.sm,
-  },
-  metricInfo: {
-    flex: 1,
-  },
-  metricLabel: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    marginBottom: 2,
-  },
-  metricValue: {
-    ...typography.body,
-    color: colors.textPrimary,
-    fontWeight: '600',
-  },
   modalContainer: {
     flex: 1,
     backgroundColor: colors.background,

@@ -170,13 +170,18 @@ async def signup(user_data: UserCreate):
         if existing_user:
             raise HTTPException(status_code=400, detail="Email already registered")
         
+        # Normalize apaar_id: strip all whitespace so '1234 5678 9876' == '123456789876'
+        normalized_apaar_id = None
+        if user_data.apaar_id:
+            normalized_apaar_id = "".join(str(user_data.apaar_id).split()).upper()
+        
         # Create user document
         user_dict = {
             "email": user_data.email,
             "hashed_password": get_password_hash(user_data.password),
             "role": user_data.role.value if isinstance(user_data.role, UserRole) else user_data.role,
             "full_name": user_data.full_name,
-            "apaar_id": user_data.apaar_id,
+            "apaar_id": normalized_apaar_id,
             "created_at": get_ist_now()
         }
         
@@ -191,7 +196,7 @@ async def signup(user_data: UserCreate):
             access_token=access_token,
             token_type="bearer",
             role=user_data.role,
-            apaar_id=user_data.apaar_id
+            apaar_id=normalized_apaar_id
         )
     except HTTPException:
         raise
@@ -202,7 +207,7 @@ async def signup(user_data: UserCreate):
 @app.post("/api/auth/login", response_model=Token)
 async def login(user_data: UserLogin):
     user = await users_collection.find_one({"email": user_data.email})
-    if not user:
+    if not user or not verify_password(user_data.password, user.get("hashed_password", "")):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
     
     user_role = user["role"]
@@ -224,12 +229,35 @@ async def get_student_profile(current_user: dict = Depends(get_current_user)):
     if current_user["role"] != "student" and current_user["role"] != "parent":
         raise HTTPException(status_code=403, detail="Access denied")
     
-    profile = await users_collection.find_one({"email": current_user["email"]})
-    print(profile)
+    # Determine which user to look up: for parent, look up their child by apaar_id
+    if current_user["role"] == "parent":
+        target_apaar_id = current_user.get("apaar_id")
+        if not target_apaar_id:
+            raise HTTPException(status_code=404, detail="No child APAAR ID linked to this parent account")
+        profile = await users_collection.find_one({"apaar_id": target_apaar_id, "role": "student"})
+        if not profile:
+            # Fallback: return the parent's own profile if no child found
+            profile = await users_collection.find_one({"email": current_user["email"]})
+    else:
+        profile = await users_collection.find_one({"email": current_user["email"]})
+    
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
     
     profile["_id"] = str(profile["_id"])
+    profile.pop("hashed_password", None)  # Never expose password hash
+    
+    # Merge student_profiles data (grade, school, DOB, etc.) into the response
+    apaar_id = profile.get("apaar_id")
+    if apaar_id:
+        student_profile_doc = await student_profiles_collection.find_one({"apaar_id": apaar_id})
+        if student_profile_doc:
+            student_profile_doc.pop("_id", None)
+            # Merge: student_profiles fields supplement but don't overwrite user fields
+            for key, value in student_profile_doc.items():
+                if key not in profile:
+                    profile[key] = value
+    
     return profile
 
 @app.get("/api/student/pending-tests")
@@ -421,7 +449,10 @@ async def get_student_quiz_history(current_user: dict = Depends(get_current_user
         raise HTTPException(status_code=403, detail="Access denied")
     
     history = []
-    async for item in quiz_history_collection.find({"child_email": current_user["email"]}).sort("created_at", -1):
+    # Only return quiz_attempt entries, not parent_report entries
+    async for item in quiz_history_collection.find(
+        {"child_email": current_user["email"], "kind": "quiz_attempt"}
+    ).sort("created_at", -1):
         item["_id"] = str(item["_id"])
         history.append(item)
     return {"quiz_history": history}
@@ -473,36 +504,43 @@ async def get_students(current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Access denied")
     
     students = []
-    async for student in users_collection.find():
+    async for student in users_collection.find({"role": "student"}):
         student["_id"] = str(student["_id"])
+        # Remove sensitive fields before returning
+        student.pop("hashed_password", None)
+        # Merge student_profiles data for grade, school info
+        apaar_id = student.get("apaar_id")
+        if apaar_id:
+            sp = await student_profiles_collection.find_one({"apaar_id": apaar_id})
+            if sp:
+                sp.pop("_id", None)
+                for key, value in sp.items():
+                    if key not in student:
+                        student[key] = value
         students.append(student)
     
     return {"students": students}
 
 @app.post("/api/teacher/upload-physical-test")
-async def upload_physical_test(data: PhysicalTestInput, current_user: dict = Depends(get_current_user)):
+async def upload_physical_test(
+    data: PhysicalTestInput,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user)
+):
     if current_user["role"] != "teacher":
         raise HTTPException(status_code=403, detail="Access denied")
-    
-    from datetime import datetime
-    
-    # Log received data
-    logger.info("=" * 80)
-    logger.info("📊 PHYSICAL TEST DATA RECEIVED")
-    logger.info("=" * 80)
-    logger.info(f"APAAR ID: {data.apaar_id}")
-    logger.info(f"BMI: {data.bmi}")
-    logger.info(f"Fitness Score: {data.fitness_score}")
-    logger.info(f"Height (cm): {data.height_cm}")
-    logger.info(f"Weight (kg): {data.weight_kg}")
-    logger.info(f"Heart Rate (bpm): {data.resting_heart_rate}")
-    logger.info(f"BP Systolic (mmHg): {data.systolic_bp}")
-    logger.info(f"BP Diastolic (mmHg): {data.diastolic_bp}")
-    logger.info(f"Sleep (hours): {data.sleep_hours}")
-    logger.info(f"Health Notes: {data.health_notes}")
-    logger.info("=" * 80)
-    
-    # Base physical metrics (all optional)
+
+    # Normalize APAAR ID — strip spaces so '1234 5678 9875' == '123456789875'
+    raw_apaar = data.apaar_id or ""
+    normalized_apaar_id = "".join(raw_apaar.split()).upper()
+    if not normalized_apaar_id:
+        raise HTTPException(status_code=400, detail="apaar_id is required")
+
+    logger.info("=" * 60)
+    logger.info("PHYSICAL TEST DATA RECEIVED for APAAR: %s", normalized_apaar_id)
+    logger.info("=" * 60)
+
+    # Build physical_metrics dict, stripping None values
     physical_metrics = {
         "bmi": data.bmi,
         "fitness_score": data.fitness_score,
@@ -514,42 +552,60 @@ async def upload_physical_test(data: PhysicalTestInput, current_user: dict = Dep
         "sleep_hours": data.sleep_hours,
         "additional_metrics": data.additional_metrics,
     }
-    # Remove nulls to keep documents clean
     physical_metrics = {k: v for k, v in physical_metrics.items() if v is not None}
-    
-    logger.info(f"📦 Storing physical_metrics: {physical_metrics}")
-    logger.info("=" * 80)
-
-    student_profile = await student_profiles_collection.find_one({"apaar_id": data.apaar_id}) or {}
-    advice = None
-    try:
-        advice = await generate_physical_advice(physical_metrics, student_profile, data.health_notes)
-    except Exception:
-        logger.exception("generate_physical_advice failed")
-        advice = None
 
     test_result_dict = {
-        "apaar_id": data.apaar_id,
+        "apaar_id": normalized_apaar_id,
         "test_type": "physical",
         "test_date": get_ist_now(),
         "physical_metrics": physical_metrics,
         "notes": data.health_notes,
-        "physical_advice": advice,
+        "physical_advice": None,   # Will be filled by background task
         "created_at": get_ist_now()
     }
-    
-    await test_results_collection.insert_one(test_result_dict)
-    return {"message": "Physical test data uploaded successfully", "physical_advice": advice}
 
-@app.get("/api/teacher/physical-test/{apaar_id}")
+    insert_result = await test_results_collection.insert_one(test_result_dict)
+    inserted_id = insert_result.inserted_id
+
+    # Generate physical advice in the background so we don't timeout the request
+    async def generate_advice_background(doc_id, metrics, apaar_id, health_notes):
+        try:
+            student_profile = await student_profiles_collection.find_one({"apaar_id": apaar_id}) or {}
+            advice = await generate_physical_advice(metrics, student_profile, health_notes)
+            if advice:
+                await test_results_collection.update_one(
+                    {"_id": doc_id},
+                    {"$set": {"physical_advice": advice}}
+                )
+                logger.info("Physical advice saved for %s", apaar_id)
+        except Exception:
+            logger.exception("Background physical advice generation failed for %s", apaar_id)
+
+    background_tasks.add_task(
+        generate_advice_background,
+        inserted_id,
+        physical_metrics,
+        normalized_apaar_id,
+        data.health_notes
+    )
+
+    return {
+        "message": "Physical test data uploaded successfully. AI advice is being generated in the background.",
+        "apaar_id": normalized_apaar_id
+    }
+
+@app.get("/api/teacher/physical-test/{apaar_id:path}")
 async def get_physical_test(apaar_id: str, current_user: dict = Depends(get_current_user)):
     """Get the latest physical test data for a student with nutrition plan"""
     if current_user["role"] != "teacher":
         raise HTTPException(status_code=403, detail="Access denied")
-    
+
+    # Normalize APAAR ID — strip spaces & uppercase to match stored format
+    normalized_apaar_id = "".join(apaar_id.split()).upper()
+
     # Find the most recent physical test for this student
     physical_test = await test_results_collection.find_one(
-        {"apaar_id": apaar_id, "test_type": "physical"},
+        {"apaar_id": normalized_apaar_id, "test_type": "physical"},
         sort=[("created_at", -1)]
     )
     
@@ -647,23 +703,81 @@ async def get_child_profile(current_user: dict = Depends(get_current_user)):
     if current_user["role"] != "parent":
         raise HTTPException(status_code=403, detail="Access denied")
     
-    profile = await users_collection.find_one({"apaar_id": current_user["apaar_id"]})
+    raw_apaar_id = current_user.get("apaar_id")
+    # Normalize the stored apaar_id (strip spaces) for robust lookup
+    target_apaar_id = "".join(str(raw_apaar_id).split()).upper() if raw_apaar_id else None
+    
+    if not target_apaar_id:
+        # Parent has no child linked — return a soft empty response instead of crashing
+        return {"child_linked": False, "message": "No child APAAR ID linked to this parent account"}
+    
+    # Find child by normalized apaar_id
+    profile = await users_collection.find_one({"apaar_id": target_apaar_id, "role": "student"})
     if not profile:
-        raise HTTPException(status_code=404, detail="Child profile not found")
+        # Child not registered yet — return soft response so frontend can show a helpful message
+        return {
+            "child_linked": True,
+            "child_registered": False,
+            "apaar_id": target_apaar_id,
+            "message": f"No student account found with APAAR ID {target_apaar_id}. Ask your child to register first."
+        }
     
     profile["_id"] = str(profile["_id"])
+    profile.pop("hashed_password", None)  # Never expose password hash
+    profile["child_linked"] = True
+    profile["child_registered"] = True
+    
+    # Merge full student_profiles data (grade, school, DOB, etc.)
+    student_profile_doc = await student_profiles_collection.find_one({"apaar_id": target_apaar_id})
+    if student_profile_doc:
+        student_profile_doc.pop("_id", None)
+        for key, value in student_profile_doc.items():
+            if key not in profile:
+                profile[key] = value
+    
     return profile
 
 @app.get("/api/parent/test-results")
 async def get_child_test_results(current_user: dict = Depends(get_current_user)):
     if current_user["role"] != "parent":
         raise HTTPException(status_code=403, detail="Access denied")
-    
+
+    # Normalize apaar_id for lookup
+    raw_apaar_id = current_user.get("apaar_id")
+    normalized_apaar_id = "".join(str(raw_apaar_id).split()).upper() if raw_apaar_id else None
+    if not normalized_apaar_id:
+        return {"test_results": []}
+
     results = []
-    async for result in test_results_collection.find({"apaar_id": current_user["apaar_id"]}):
+
+    # 1. Physical test results from test_results_collection (keyed by apaar_id)
+    async for result in test_results_collection.find({"apaar_id": normalized_apaar_id}):
         result["_id"] = str(result["_id"])
         results.append(result)
-    
+
+    # 2. EQ/IQ quiz results from quiz_history_collection (keyed by apaar_id or child_email)
+    #    Find the child's email first
+    child_user = await users_collection.find_one({"apaar_id": normalized_apaar_id, "role": "student"})
+    if child_user:
+        child_email = child_user.get("email")
+        async for item in quiz_history_collection.find(
+            {"apaar_id": normalized_apaar_id, "kind": "quiz_attempt"}
+        ).sort("created_at", -1):
+            item["_id"] = str(item["_id"])
+            results.append(item)
+
+        # Also capture any quiz results stored only by email (backward compat)
+        if child_email:
+            async for item in quiz_history_collection.find(
+                {"child_email": child_email, "kind": "quiz_attempt",
+                 "apaar_id": {"$ne": normalized_apaar_id}}  # avoid duplicates
+            ).sort("created_at", -1):
+                item["_id"] = str(item["_id"])
+                results.append(item)
+
+    # Sort combined results by date descending
+    results.sort(key=lambda r: str(r.get("created_at") or r.get("test_date") or ""), reverse=True)
+
     return {"test_results": results}
 
 @app.post("/api/parent/generate-report")
@@ -768,7 +882,10 @@ async def get_parent_quiz_history(current_user: dict = Depends(get_current_user)
         return {"quiz_history": []}
     
     history = []
-    async for item in quiz_history_collection.find({"child_email": child_email}).sort("created_at", -1):
+    # Only return quiz_attempt entries — parent_report entries are handled by /parent/remedies
+    async for item in quiz_history_collection.find(
+        {"child_email": child_email, "kind": "quiz_attempt"}
+    ).sort("created_at", -1):
         item["_id"] = str(item["_id"])
         history.append(item)
     return {"quiz_history": history}

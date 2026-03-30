@@ -100,7 +100,6 @@ export default function TeacherDashboardScreen({ navigation }) {
         const email = parseStrOrNull(mapped.email);
         const apaar_id = parseStrOrNull(mapped.apaar_id || mapped.apaar);
 
-        const additional_metrics = {};
         const height_cm = parseNumOrNull(mapped.height_cm || mapped.height);
         const weight_kg = parseNumOrNull(mapped.weight_kg || mapped.weight);
         const resting_heart_rate = parseNumOrNull(
@@ -109,20 +108,32 @@ export default function TeacherDashboardScreen({ navigation }) {
         const systolic_bp = parseNumOrNull(mapped.systolic_bp || mapped.bp_systolic);
         const diastolic_bp = parseNumOrNull(mapped.diastolic_bp || mapped.bp_diastolic);
         const sleep_hours = parseNumOrNull(mapped.sleep_hours || mapped.sleep);
+        const bmi = parseNumOrNull(mapped.bmi);
+        const fitness_score = parseNumOrNull(mapped.fitness_score || mapped.fitnessscore);
+        const health_notes = parseStrOrNull(mapped.health_notes || mapped.notes);
 
-        if (height_cm !== null) additional_metrics.height_cm = height_cm;
-        if (weight_kg !== null) additional_metrics.weight_kg = weight_kg;
-        if (resting_heart_rate !== null) additional_metrics.resting_heart_rate = resting_heart_rate;
-        if (systolic_bp !== null) additional_metrics.systolic_bp = systolic_bp;
-        if (diastolic_bp !== null) additional_metrics.diastolic_bp = diastolic_bp;
-        if (sleep_hours !== null) additional_metrics.sleep_hours = sleep_hours;
+        // additional_metrics only holds fields not already in the top-level schema,
+        // so we do NOT duplicate the standard fields inside it.
+        const additional_metrics = {};
+        // Any extra columns not matching known keys go here
+        const knownKeys = new Set([
+          'email', 'apaar_id', 'apaar', 'height_cm', 'height', 'weight_kg', 'weight',
+          'resting_heart_rate', 'restinghr', 'heart_rate', 'systolic_bp', 'bp_systolic',
+          'diastolic_bp', 'bp_diastolic', 'sleep_hours', 'sleep', 'bmi',
+          'fitness_score', 'fitnessscore', 'health_notes', 'notes',
+        ]);
+        Object.keys(mapped).forEach((key) => {
+          if (!knownKeys.has(key) && mapped[key] !== '' && mapped[key] !== null && mapped[key] !== undefined) {
+            additional_metrics[key] = mapped[key];
+          }
+        });
 
         return {
           email,
           apaar_id,
-          bmi: parseNumOrNull(mapped.bmi),
-          fitness_score: parseNumOrNull(mapped.fitness_score || mapped.fitnessscore),
-          health_notes: parseStrOrNull(mapped.health_notes || mapped.notes),
+          bmi,
+          fitness_score,
+          health_notes,
           height_cm,
           weight_kg,
           resting_heart_rate,

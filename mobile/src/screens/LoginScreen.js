@@ -30,7 +30,7 @@ export default function LoginScreen({ navigation }) {
 
     setLoading(true);
     try {
-      const response = await authAPI.login(email);
+      const response = await authAPI.login(email, password);
       const { access_token, role, apaar_id } = response.data;
       
       await signIn(access_token, role, apaar_id);

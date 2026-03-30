@@ -31,7 +31,7 @@ function getBadgeColor(testType) {
     case 'physical':
       return colors.physical;
     default:
-      return colors.textLight;
+      return colors.textDisabled;
   }
 }
 
