@@ -5,6 +5,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import timedelta, datetime, timezone
 from typing import List, Optional
+from pydantic import BaseModel
 from app.config import settings
 from app.database import (
     users_collection,
@@ -780,6 +781,200 @@ async def get_child_test_results(current_user: dict = Depends(get_current_user))
 
     return {"test_results": results}
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SYMPTOM CHECKER — Preventive Suggestions for Parents
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SymptomCheckRequest(BaseModel):
+    symptoms: List[str]  # e.g. ["stress", "fatigue", "low appetite"]
+    additional_notes: Optional[str] = None
+
+
+RULE_BASED_SUGGESTIONS = {
+    "stress": {
+        "home": ["Encourage creative activities (drawing, music, crafts)", "Ensure a consistent bedtime routine"],
+        "emotional": ["Practice 5-minute breathing exercises together", "Have a calm, open daily check-in conversation"]
+    },
+    "fatigue": {
+        "home": ["Ensure 9–11 hours of sleep for school-age children", "Reduce screen time 1 hour before bed"],
+        "emotional": ["Check if academic or social pressures are causing exhaustion"]
+    },
+    "anxiety": {
+        "home": ["Limit caffeine (chocolate, soda)", "Establish predictable daily routines"],
+        "emotional": ["Validate feelings without minimizing them", "Practice grounding exercises (name 5 things you can see)"]
+    },
+    "low appetite": {
+        "home": ["Offer small frequent meals rather than large ones", "Make mealtimes calm and screen-free"],
+        "emotional": ["Check if anxiety or social issues around lunchtime at school are affecting appetite"]
+    },
+    "headache": {
+        "home": ["Ensure adequate hydration throughout the day", "Check if the child needs an eye test"],
+        "emotional": []
+    },
+    "irritability": {
+        "home": ["Check sleep quality and iron/vitamin D levels"],
+        "emotional": ["Spend 15 uninterrupted minutes daily with child in their chosen activity"]
+    },
+    "difficulty concentrating": {
+        "home": ["Ensure a clutter-free, quiet study space", "Try the Pomodoro technique: 25 min study, 5 min break"],
+        "emotional": ["Discuss if the subject matter is confusing — arrange extra help early"]
+    },
+    "social withdrawal": {
+        "home": ["Arrange small playdates rather than large groups"],
+        "emotional": ["Gently ask about friendships, listen without judgment", "Consult school counselor if withdrawal persists > 2 weeks"]
+    },
+    "sadness": {
+        "home": ["Ensure regular physical activity and natural sunlight"],
+        "emotional": ["Create a 'feelings journal' for the child", "Seek professional guidance if sadness persists > 2 weeks"]
+    },
+    "stomach pain": {
+        "home": ["Check diet for potential food sensitivities", "Ensure regular mealtimes"],
+        "emotional": ["Unexplained stomach pain is often linked to anxiety — explore school-related worries"]
+    },
+}
+
+HIGH_URGENCY_SYMPTOMS = {"sadness", "social withdrawal", "anxiety", "self-harm", "aggression"}
+
+
+async def _generate_symptom_suggestions_llm(symptoms: List[str], notes: Optional[str], child_profile: dict) -> dict:
+    """Use Gemini to generate personalised suggestions. Rotates between key 1 and key 2."""
+    from google import genai
+    from google.genai import types
+    from app.llm_service import _get_gemini_api_key
+    import json
+
+    child_name = child_profile.get("full_name", "the child")
+    grade = child_profile.get("grade", "")
+    grade_text = f" in grade {grade}" if grade else ""
+    symptom_list = ", ".join(symptoms)
+    notes_text = f"Additional parent notes: {notes}" if notes else ""
+
+    prompt = f"""You are a child wellness advisor helping a parent.
+
+Child: {child_name}{grade_text}
+Reported symptoms: {symptom_list}
+{notes_text}
+
+Provide:
+1. home_remedies: 3 practical home/lifestyle suggestions (list)
+2. emotional_support: 2-3 emotional support strategies for parents (list)
+3. consult_professional: true if symptoms suggest professional evaluation needed (boolean)
+4. professional_note: brief note on what kind of professional to consult and why (string, or "" if not needed)
+5. urgency: "low", "medium", or "high" based on severity
+6. summary: one-sentence compassionate summary for the parent
+
+Respond ONLY with valid JSON matching this exact schema:
+{{
+  "home_remedies": ["..."],
+  "emotional_support": ["..."],
+  "consult_professional": false,
+  "professional_note": "",
+  "urgency": "low",
+  "summary": "..."
+}}"""
+
+    last_err = None
+    for key_index in range(2):          # Try key 1 then key 2
+        try:
+            api_key = _get_gemini_api_key(key_index)
+            client_genai = genai.Client(api_key=api_key)
+            response = client_genai.models.generate_content(
+                model="gemini-1.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                ),
+            )
+            raw = response.text.strip()
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            return json.loads(raw)
+        except Exception as e:
+            last_err = e
+            logger.warning("Gemini key %d failed for symptom check: %s", key_index + 1, str(e))
+
+    raise last_err
+
+
+def _generate_symptom_suggestions_fallback(symptoms: List[str]) -> dict:
+    """Rule-based fallback suggestions when LLM fails."""
+    home = []
+    emotional = []
+    consult = False
+
+    lowered = [s.lower() for s in symptoms]
+
+    for s in lowered:
+        rules = RULE_BASED_SUGGESTIONS.get(s, {})
+        home.extend(rules.get("home", []))
+        emotional.extend(rules.get("emotional", []))
+        if s in HIGH_URGENCY_SYMPTOMS:
+            consult = True
+
+    # Deduplicate and cap
+    home = list(dict.fromkeys(home))[:4]
+    emotional = list(dict.fromkeys(emotional))[:3]
+
+    if not home:
+        home = ["Maintain a consistent daily routine", "Ensure adequate sleep and balanced nutrition", "Encourage physical activity"]
+    if not emotional:
+        emotional = ["Have open, non-judgmental conversations", "Spend quality time together daily"]
+
+    urgency = "high" if consult else ("medium" if len(symptoms) >= 3 else "low")
+    professional_note = "Consider consulting a pediatrician or child psychologist given the reported symptoms." if consult else ""
+
+    return {
+        "home_remedies": home,
+        "emotional_support": emotional,
+        "consult_professional": consult,
+        "professional_note": professional_note,
+        "urgency": urgency,
+        "summary": f"Based on {len(symptoms)} reported symptom(s), here are recommended actions to support your child."
+    }
+
+
+@app.post("/api/parent/symptom-check")
+async def symptom_check(
+    request: SymptomCheckRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    if current_user["role"] != "parent":
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if not request.symptoms:
+        raise HTTPException(status_code=400, detail="At least one symptom is required")
+
+    # Get child profile for personalization
+    raw_apaar = current_user.get("apaar_id") or ""
+    normalized_apaar = "".join(raw_apaar.split()).upper()
+    child_profile = {}
+    if normalized_apaar:
+        child_user = await users_collection.find_one({"apaar_id": normalized_apaar, "role": "student"})
+        if child_user:
+            child_profile = {
+                "full_name": child_user.get("full_name", ""),
+                "grade": ""
+            }
+            sp = await student_profiles_collection.find_one({"apaar_id": normalized_apaar})
+            if sp:
+                child_profile["grade"] = sp.get("grade", "")
+
+    # Try LLM first, fall back to rule-based
+    try:
+        result = await _generate_symptom_suggestions_llm(
+            request.symptoms, request.additional_notes, child_profile
+        )
+        result["source"] = "ai"
+        logger.info("Symptom check LLM success for %s", current_user.get("email"))
+    except Exception as e:
+        logger.warning("Symptom check LLM failed (%s), using fallback", str(e))
+        result = _generate_symptom_suggestions_fallback(request.symptoms)
+        result["source"] = "fallback"
+
+    return result
+
+
 @app.post("/api/parent/generate-report")
 async def generate_report(current_user: dict = Depends(get_current_user)):
     if current_user["role"] != "parent":
@@ -873,22 +1068,120 @@ async def get_remedies(current_user: dict = Depends(get_current_user)):
 async def get_parent_quiz_history(current_user: dict = Depends(get_current_user)):
     if current_user["role"] != "parent":
         raise HTTPException(status_code=403, detail="Access denied")
-    
-    child_user = await users_collection.find_one({"role": "student", "apaar_id": current_user["apaar_id"]})
-    if not child_user:
-        child_user = await users_collection.find_one({"apaar_id": current_user["apaar_id"], "role": {"$ne": "parent"}})
-    child_email = child_user.get("email") if child_user else None
-    if not child_email:
+
+    raw_apaar_id = current_user.get("apaar_id", "") or ""
+    # Normalize: strip spaces + uppercase (matches how quiz records store apaar_id)
+    normalized_parent_apaar = "".join(raw_apaar_id.split()).upper()
+
+    # ── Strategy 1: find the linked student by matching APAAR ID ──────────────
+    child_email = None
+    student_apaar_ids = set()
+
+    if normalized_parent_apaar:
+        # Try normalized form first
+        student = await users_collection.find_one({
+            "apaar_id": normalized_parent_apaar, "role": "student"
+        })
+        if not student:
+            # Try with original spacing (e.g. "1234 5678 9876")
+            student = await users_collection.find_one({
+                "apaar_id": raw_apaar_id, "role": "student"
+            })
+        if student:
+            child_email = student.get("email")
+            # Collect all APAAR ID variants stored for this student
+            student_apaar_ids.add(student.get("apaar_id", ""))
+            student_apaar_ids.add("".join(str(student.get("apaar_id", "")).split()).upper())
+            student_apaar_ids.discard("")
+
+    # ── Collect quiz_history by all known identifiers ─────────────────────────
+    queries = []
+
+    # By child_email (older records)
+    if child_email:
+        queries.append({"child_email": child_email, "kind": "quiz_attempt"})
+
+    # By apaar_id variants stored directly in quiz_history (newer records)
+    for aid in student_apaar_ids:
+        queries.append({"apaar_id": aid, "kind": "quiz_attempt"})
+
+    # Also query by the parent's own apaar_id (case where parent & student share ID)
+    if normalized_parent_apaar:
+        queries.append({"apaar_id": normalized_parent_apaar, "kind": "quiz_attempt"})
+    if raw_apaar_id and raw_apaar_id != normalized_parent_apaar:
+        queries.append({"apaar_id": raw_apaar_id, "kind": "quiz_attempt"})
+
+    if not queries:
         return {"quiz_history": []}
-    
+
+    # De-duplicate by _id
+    seen_ids: set = set()
     history = []
-    # Only return quiz_attempt entries — parent_report entries are handled by /parent/remedies
-    async for item in quiz_history_collection.find(
-        {"child_email": child_email, "kind": "quiz_attempt"}
-    ).sort("created_at", -1):
-        item["_id"] = str(item["_id"])
-        history.append(item)
+
+    for query in queries:
+        async for item in quiz_history_collection.find(query).sort("created_at", -1):
+            item_id = str(item["_id"])
+            if item_id not in seen_ids:
+                seen_ids.add(item_id)
+                item["_id"] = item_id
+                history.append(item)
+
+    # Sort combined results newest-first
+    history.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
+
     return {"quiz_history": history}
+
+
+@app.get("/api/teacher/student-quiz-history")
+async def get_student_quiz_history_for_teacher(
+    apaar_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Teachers can view any student's quiz history by APAAR ID."""
+    if current_user["role"] != "teacher":
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Build all APAAR ID variants to maximise match coverage
+    normalized = "".join(apaar_id.split()).upper()
+    variants = list({normalized, apaar_id})   # de-dup in case they're identical
+
+    # Find the student record for display name & email
+    student = await users_collection.find_one({"apaar_id": normalized, "role": "student"})
+    if not student:
+        student = await users_collection.find_one({"apaar_id": apaar_id, "role": "student"})
+
+    student_email = student.get("email") if student else None
+    student_name = student.get("full_name", "Student") if student else "Unknown"
+
+    # If we found a student, also collect their stored apaar_id variant
+    if student and student.get("apaar_id"):
+        variants.append(student["apaar_id"])
+        variants = list(set(variants))
+
+    # Build query list covering all variants and email
+    queries = [{"apaar_id": v, "kind": "quiz_attempt"} for v in variants]
+    if student_email:
+        queries.append({"child_email": student_email, "kind": "quiz_attempt"})
+
+    # Fetch and de-duplicate results
+    seen_ids: set = set()
+    history = []
+
+    for query in queries:
+        async for item in quiz_history_collection.find(query).sort("created_at", -1):
+            item_id = str(item["_id"])
+            if item_id not in seen_ids:
+                seen_ids.add(item_id)
+                item["_id"] = item_id
+                history.append(item)
+
+    history.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
+
+    return {
+        "quiz_history": history,
+        "student_name": student_name,
+        "apaar_id": normalized,
+    }
 
 @app.get("/")
 async def root():

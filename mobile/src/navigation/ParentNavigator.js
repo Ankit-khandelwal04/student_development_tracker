@@ -77,22 +77,37 @@ export default function ParentNavigator() {
         },
       }}
     >
-      <Tab.Screen 
-        name="Home" 
+      <Tab.Screen
+        name="Home"
         component={DashboardStack}
-        options={{ 
+        options={{
           headerShown: false,
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons 
-              name={focused ? 'home' : 'home-outline'} 
-              size={26} 
-              color={color} 
+            <Ionicons
+              name={focused ? 'home' : 'home-outline'}
+              size={26}
+              color={color}
             />
           ),
         }}
       />
-      <Tab.Screen 
-        name="Profile" 
+      <Tab.Screen
+        name="QuizHistoryTab"
+        component={QuizHistoryScreen}
+        options={{
+          headerShown: false,
+          tabBarLabel: 'Quiz History',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'document-text' : 'document-text-outline'}
+              size={26}
+              color={color}
+            />
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="Profile"
         component={ProfileScreen}
         options={{
           headerStyle: {
@@ -106,10 +121,10 @@ export default function ParentNavigator() {
             fontWeight: '600',
           },
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons 
-              name={focused ? 'person' : 'person-outline'} 
-              size={26} 
-              color={color} 
+            <Ionicons
+              name={focused ? 'person' : 'person-outline'}
+              size={26}
+              color={color}
             />
           ),
         }}

@@ -166,23 +166,40 @@ export default function TeacherDashboardScreen({ navigation }) {
   };
 
   const renderStudent = ({ item }) => (
-    <TouchableOpacity
-      style={styles.studentCard}
-      onPress={() => navigation.navigate('UploadPhysical', { student: item })}
-      activeOpacity={0.7}
-    >
-      <View style={styles.studentAvatar}>
-        <Text style={styles.studentAvatarText}>
-          {item.full_name.charAt(0).toUpperCase()}
-        </Text>
+    <View style={styles.studentCard}>
+      <View style={styles.studentCardTop}>
+        <View style={styles.studentAvatar}>
+          <Text style={styles.studentAvatarText}>
+            {item.full_name.charAt(0).toUpperCase()}
+          </Text>
+        </View>
+        <View style={styles.studentInfo}>
+          <Text style={styles.studentName}>{item.full_name}</Text>
+          <Text style={styles.studentDetail}>APAAR ID: {item.apaar_id}</Text>
+          <Text style={styles.studentDetail}>Grade: {item.grade}</Text>
+        </View>
       </View>
-      <View style={styles.studentInfo}>
-        <Text style={styles.studentName}>{item.full_name}</Text>
-        <Text style={styles.studentDetail}>APAAR ID: {item.apaar_id}</Text>
-        <Text style={styles.studentDetail}>Grade: {item.grade}</Text>
+      {/* Two action buttons */}
+      <View style={styles.studentActions}>
+        <TouchableOpacity
+          style={[styles.actionBtn, styles.actionBtnPrimary]}
+          onPress={() => navigation.navigate('UploadPhysical', { student: item })}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.actionBtnText}>💪 Physical Test</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.actionBtn, styles.actionBtnSecondary]}
+          onPress={() => navigation.navigate('StudentQuizHistory', {
+            studentApaarId: (item.apaar_id || '').replace(/\s+/g, '').toUpperCase(),
+            studentName: item.full_name,
+          })}
+          activeOpacity={0.7}
+        >
+          <Text style={[styles.actionBtnText, { color: colors.primary }]}>🧠 Quiz History</Text>
+        </TouchableOpacity>
       </View>
-      <Text style={styles.arrow}>→</Text>
-    </TouchableOpacity>
+    </View>
   );
 
   if (loading) {
@@ -286,8 +303,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
     padding: spacing.lg,
     marginBottom: spacing.md,
+  },
+  studentCardTop: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginBottom: spacing.md,
   },
   studentAvatar: {
     width: 56,
@@ -316,9 +336,29 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginBottom: 2,
   },
-  arrow: {
-    ...typography.h2,
-    color: colors.primary,
+  studentActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  actionBtn: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.md,
+    alignItems: 'center',
+  },
+  actionBtnPrimary: {
+    backgroundColor: colors.primary,
+  },
+  actionBtnSecondary: {
+    backgroundColor: colors.primary + '12',
+    borderWidth: 1,
+    borderColor: colors.primary + '40',
+  },
+  actionBtnText: {
+    ...typography.bodySmall,
+    color: colors.white,
+    fontWeight: '600',
   },
   emptyCard: {
     ...glassCard,
@@ -336,3 +376,4 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
   },
 });
+

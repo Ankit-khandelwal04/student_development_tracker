@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     openai_api_key: str = "sk-placeholder"
     gemini_api_key: str = "AIzaSyBn3a5CDNSUNOQT468-IJ0DwtzHIV28VxU"
+    gemini_api_key_2: str = "AIzaSyBWgflXKXfLciE4P-dlA-ZqZ071POcu8ZY"
     
     class Config:
         env_file = ".env"

@@ -5,6 +5,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import TeacherDashboardScreen from '../screens/TeacherDashboardScreen';
 import UploadPhysicalScreen from '../screens/UploadPhysicalScreen';
+import QuizHistoryScreen from '../screens/QuizHistoryScreen';
+import QuizHistoryDetailScreen from '../screens/QuizHistoryDetailScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import { colors, spacing, typography, shadows } from '../styles/theme';
 
@@ -14,23 +16,40 @@ const Tab = createBottomTabNavigator();
 function StudentsStack() {
   return (
     <Stack.Navigator>
-      <Stack.Screen 
-        name="Students" 
+      <Stack.Screen
+        name="Students"
         component={TeacherDashboardScreen}
         options={{ headerShown: false }}
       />
-      <Stack.Screen 
-        name="UploadPhysical" 
+      <Stack.Screen
+        name="UploadPhysical"
         component={UploadPhysicalScreen}
-        options={{ 
+        options={{
           title: 'Upload Physical Test',
-          headerStyle: {
-            backgroundColor: colors.primary,
-          },
+          headerStyle: { backgroundColor: colors.primary },
           headerTintColor: colors.white,
-          headerTitleStyle: {
-            ...typography.h3,
-          },
+          headerTitleStyle: { ...typography.h3 },
+        }}
+      />
+      {/* Teacher can navigate here from a student card */}
+      <Stack.Screen
+        name="StudentQuizHistory"
+        component={QuizHistoryScreen}
+        options={({ route }) => ({
+          title: `${route.params?.studentName || 'Student'}'s Quiz History`,
+          headerStyle: { backgroundColor: colors.primary },
+          headerTintColor: colors.white,
+          headerTitleStyle: { ...typography.h3 },
+        })}
+      />
+      <Stack.Screen
+        name="QuizHistoryDetail"
+        component={QuizHistoryDetailScreen}
+        options={{
+          title: 'Quiz Analysis',
+          headerStyle: { backgroundColor: colors.primary },
+          headerTintColor: colors.white,
+          headerTitleStyle: { ...typography.h3 },
         }}
       />
     </Stack.Navigator>
@@ -62,23 +81,23 @@ export default function TeacherNavigator() {
         },
       }}
     >
-      <Tab.Screen 
-        name="StudentsTab" 
+      <Tab.Screen
+        name="StudentsTab"
         component={StudentsStack}
-        options={{ 
+        options={{
           headerShown: false,
           tabBarLabel: 'Students',
           tabBarIcon: ({ color, size, focused }) => (
-            <Ionicons 
-              name={focused ? 'people' : 'people-outline'} 
-              size={size} 
-              color={color} 
+            <Ionicons
+              name={focused ? 'people' : 'people-outline'}
+              size={size}
+              color={color}
             />
           ),
         }}
       />
-      <Tab.Screen 
-        name="Profile" 
+      <Tab.Screen
+        name="Profile"
         component={ProfileScreen}
         options={{
           headerStyle: {
@@ -87,15 +106,12 @@ export default function TeacherNavigator() {
             shadowOpacity: 0,
           },
           headerTintColor: colors.white,
-          headerTitleStyle: {
-            ...typography.h3,
-            fontWeight: '600',
-          },
+          headerTitleStyle: { ...typography.h3, fontWeight: '600' },
           tabBarIcon: ({ color, size, focused }) => (
-            <Ionicons 
-              name={focused ? 'person' : 'person-outline'} 
-              size={size} 
-              color={color} 
+            <Ionicons
+              name={focused ? 'person' : 'person-outline'}
+              size={size}
+              color={color}
             />
           ),
         }}

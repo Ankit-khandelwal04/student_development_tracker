@@ -24,8 +24,19 @@ client = Cerebras(api_key="csk-r93e2hmrnv6x8tp2vdehkhhpvxj8xr9c2h2xed66j3fr8cm4"
 # API KEY: Configured below
 # ============================================================================
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyCfyTzvwKHV94LX8-C41YT0l8cGnI7bBKA")
-GEMINI_IMAGE_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict"
+
+# ── Gemini key rotation ────────────────────────────────────────────────────────
+# Two keys are configured so that if key-1's quota is exhausted the service
+# automatically retries with key-2, giving uninterrupted AI capabilities.
+
+def _get_gemini_api_key(fallback_index: int = 0) -> str:
+    """Return a Gemini API key. fallback_index=0 → primary, 1 → secondary."""
+    from app.config import settings
+    keys = [
+        settings.gemini_api_key,       # Key 1  (GEMINI_API_KEY in .env)
+        settings.gemini_api_key_2,     # Key 2  (GEMINI_API_KEY_2 in .env)
+    ]
+    return keys[fallback_index % len(keys)]
 
 
 async def _call_llm_with_retry(messages: List[Dict], max_retries: int = 3, initial_delay: float = 2.0):
@@ -38,7 +49,7 @@ async def _call_llm_with_retry(messages: List[Dict], max_retries: int = 3, initi
             response = await loop.run_in_executor(
                 None,
                 lambda: client.chat.completions.create(
-                    model="gpt-oss-120b",
+                    model="llama-3.3-70b",
                     messages=messages,
                     temperature=0.6
                 )
@@ -890,7 +901,7 @@ CRITICAL RULES:
 
     try:
         response = client.chat.completions.create(
-            model="gpt-oss-120b",
+            model="llama-3.3-70b",
             messages=[
                 {"role": "system", "content": "You are an expert educational psychologist. Respond with valid JSON only. Never embed chart data inside Data_Analysis."},
                 {"role": "user", "content": prompt},

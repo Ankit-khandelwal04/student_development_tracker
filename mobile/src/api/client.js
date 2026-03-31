@@ -13,7 +13,7 @@ import { Platform } from 'react-native';
 //   Ethernet: 192.168.0.64
 // ─────────────────────────────────────────────────────────
 
-const HOST_LAN_IP = '192.168.1.244'; // ← UPDATE this if your Wi-Fi IP changes
+const HOST_LAN_IP = '192.168.1.244'; // ← UPDATE this whenever your Wi-Fi IP changes (run ipconfig to check)
 
 const getApiUrl = () => {
   // Hard override from environment (highest priority)
@@ -148,7 +148,7 @@ export const teacherAPI = {
 
   uploadPhysicalTest: (data) =>
     apiClient.post('/teacher/upload-physical-test', data, {
-      timeout: 30000, // 30s — DB write + background task kick-off
+      timeout: 30000,
     }),
 
   getPhysicalTest: (apaarId) =>
@@ -156,9 +156,13 @@ export const teacherAPI = {
 
   uploadPhysicalTestsBulk: (items) =>
     apiClient.post('/teacher/upload-physical-tests-bulk', { items }, {
-      timeout: 60000, // 60s for bulk uploads
+      timeout: 60000,
     }),
+
+  getStudentQuizHistory: (apaarId) =>
+    apiClient.get('/teacher/student-quiz-history', { params: { apaar_id: apaarId } }),
 };
+
 
 export const parentAPI = {
   getChildProfile: () =>
@@ -177,6 +181,15 @@ export const parentAPI = {
 
   getRemedies: () =>
     apiClient.get('/parent/remedies'),
+
+  checkSymptoms: (symptoms, additionalNotes = '') =>
+    apiClient.post('/parent/symptom-check', {
+      symptoms,
+      additional_notes: additionalNotes || undefined,
+    }, {
+      timeout: 30000, // 30s — Gemini LLM call
+    }),
 };
+
 
 export default apiClient;

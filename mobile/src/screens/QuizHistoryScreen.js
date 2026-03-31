@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { studentAPI, parentAPI } from '../api/client';
+import { studentAPI, parentAPI, teacherAPI } from '../api/client';
 import { colors, spacing, borderRadius, typography, shadows, glassCard } from '../styles/theme';
 
 function formatDate(value) {
@@ -44,9 +44,13 @@ function getTestIcon(testType) {
   }
 }
 
-export default function QuizHistoryScreen({ navigation }) {
+export default function QuizHistoryScreen({ navigation, route }) {
   const [loading, setLoading] = useState(true);
   const [history, setHistory] = useState([]);
+
+  // Teacher may pass studentApaarId + studentName via navigation params
+  const studentApaarId = route?.params?.studentApaarId;
+  const studentName = route?.params?.studentName || 'Student';
 
   useEffect(() => {
     loadHistory();
@@ -56,17 +60,27 @@ export default function QuizHistoryScreen({ navigation }) {
     setLoading(true);
     try {
       const role = await AsyncStorage.getItem('userRole');
-      const response =
-        role === 'parent'
-          ? await parentAPI.getQuizHistory()
-          : await studentAPI.getQuizHistory();
-      setHistory(response.data.quiz_history || []);
+
+      let response;
+      if (role === 'teacher' && studentApaarId) {
+        // Teacher viewing a specific student's history
+        response = await teacherAPI.getStudentQuizHistory(studentApaarId);
+        setHistory(response.data.quiz_history || []);
+      } else if (role === 'parent') {
+        response = await parentAPI.getQuizHistory();
+        setHistory(response.data.quiz_history || []);
+      } else {
+        // Student viewing own history
+        response = await studentAPI.getQuizHistory();
+        setHistory(response.data.quiz_history || []);
+      }
     } catch (error) {
       Alert.alert('Error', 'Failed to load quiz history');
     } finally {
       setLoading(false);
     }
   };
+
 
   if (loading) {
     return (
@@ -83,8 +97,19 @@ export default function QuizHistoryScreen({ navigation }) {
         style={styles.headerGradient}
       >
         <View style={styles.header}>
-          <Text style={styles.title}>Quiz History</Text>
-          <Text style={styles.subtitle}>{history.length} total records</Text>
+          {studentApaarId ? (
+            // Teacher view — show student's name
+            <>
+              <Text style={styles.title}>{studentName}'s Quiz History</Text>
+              <Text style={styles.subtitle}>{history.length} assessment{history.length !== 1 ? 's' : ''} completed</Text>
+            </>
+          ) : (
+            // Parent / Student view
+            <>
+              <Text style={styles.title}>Quiz History</Text>
+              <Text style={styles.subtitle}>{history.length} total records</Text>
+            </>
+          )}
         </View>
       </LinearGradient>
 

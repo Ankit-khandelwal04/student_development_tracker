@@ -40,24 +40,33 @@ export default function ParentDashboardScreen({ navigation }) {
   const [healthSummary, setHealthSummary] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // ─── Symptom Checker state ───────────────────────────────────────────────
+  const [selectedSymptoms, setSelectedSymptoms] = useState([]);
+  const [symptomNotes, setSymptomNotes] = useState('');
+  const [symptomResult, setSymptomResult] = useState(null);
+  const [symptomLoading, setSymptomLoading] = useState(false);
+  const [showSymptomChecker, setShowSymptomChecker] = useState(false);
+
   useEffect(() => {
     loadData();
   }, []);
 
   const generateHealthSummary = (results, remediesData) => {
     try {
-      // Calculate overall health status
+      // Fix: use != null so score of 0 isn't ignored
       const mentalTests = results.filter(r => r.test_type === 'eq' || r.test_type === 'iq');
       const physicalTests = results.filter(r => r.test_type === 'physical');
-      
-      const mentalScores = mentalTests.filter(t => t.score).map(t => t.score);
-      const avgMentalScore = mentalScores.length > 0 
-        ? mentalScores.reduce((a, b) => a + b, 0) / mentalScores.length 
+
+      const mentalScores = mentalTests.filter(t => t.score != null).map(t => t.score);
+      const avgMentalScore = mentalScores.length > 0
+        ? mentalScores.reduce((a, b) => a + b, 0) / mentalScores.length
         : 0;
-      
-      const physicalScores = physicalTests.filter(t => t.score).map(t => t.score);
-      const avgPhysicalScore = physicalScores.length > 0 
-        ? physicalScores.reduce((a, b) => a + b, 0) / physicalScores.length 
+
+      const physicalFitnessScores = physicalTests
+        .filter(t => t.physical_metrics?.fitness_score != null)
+        .map(t => t.physical_metrics.fitness_score);
+      const avgPhysicalScore = physicalFitnessScores.length > 0
+        ? physicalFitnessScores.reduce((a, b) => a + b, 0) / physicalFitnessScores.length
         : 0;
       
       // Determine status
@@ -177,27 +186,29 @@ const physicalImageUrl = `https://image.pollinations.ai/prompt/${encodeURICompon
 
   const organizeBySemester = (results) => {
     const semesters = [];
-    const sortedResults = [...results].sort((a, b) => 
-      new Date(a.test_date) - new Date(b.test_date)
-    );
-    
+    // Robust sort: handle both string ISO dates and Date objects from mixed collections
+    const toMs = (r) => {
+      const raw = r.created_at || r.test_date;
+      if (!raw) return 0;
+      try { return new Date(raw).getTime(); } catch { return 0; }
+    };
+    const sortedResults = [...results].sort((a, b) => toMs(a) - toMs(b));
+
     // Group every 2 tests into a semester
     for (let i = 0; i < sortedResults.length; i += 2) {
       const semesterTests = sortedResults.slice(i, i + 2);
-      const age = profile?.age_years || 3 + Math.floor(i / 4); // Estimate age
       const semesterNum = Math.floor((i % 4) / 2) + 1;
-      
+      const yearNum = Math.floor(i / 4) + 1;
+
       semesters.push({
         id: i / 2,
-        label: `Age ${age} - Sem ${semesterNum}`,
-        age,
+        label: `Year ${yearNum} · Sem ${semesterNum}`,
         semester: semesterNum,
         tests: semesterTests,
         mentalTests: semesterTests.filter(t => t.test_type === 'eq' || t.test_type === 'iq'),
         physicalTests: semesterTests.filter(t => t.test_type === 'physical'),
       });
     }
-    
     return semesters;
   };
 
@@ -769,23 +780,24 @@ const physicalImageUrl = `https://image.pollinations.ai/prompt/${encodeURICompon
                         >
                           <View style={styles.testHeader}>
                             <View style={[styles.testIcon, { backgroundColor: test.test_type === 'eq' ? colors.eq + '20' : colors.iq + '20' }]}>
-                              <MaterialCommunityIcons 
-                                name={test.test_type === 'eq' ? 'brain' : 'lightbulb-on'} 
-                                size={24} 
-                                color={test.test_type === 'eq' ? colors.eq : colors.iq} 
+                              <MaterialCommunityIcons
+                                name={test.test_type === 'eq' ? 'brain' : 'lightbulb-on'}
+                                size={24}
+                                color={test.test_type === 'eq' ? colors.eq : colors.iq}
                               />
                             </View>
                             <View style={styles.testInfo}>
-                              <Text style={styles.testType}>{test.test_type.toUpperCase()} Test</Text>
+                              <Text style={styles.testType}>{test.test_type?.toUpperCase()} Test</Text>
                               <Text style={styles.testDate}>
-                                {new Date(test.test_date).toLocaleDateString('en-IN', { 
-                                  day: 'numeric', 
-                                  month: 'short', 
-                                  year: 'numeric' 
+                                {new Date(test.test_date || test.created_at).toLocaleDateString('en-IN', {
+                                  day: 'numeric',
+                                  month: 'short',
+                                  year: 'numeric'
                                 })}
                               </Text>
                             </View>
-                            {test.score && (
+                            {/* Fix: use != null so score 0 still shows */}
+                            {test.score != null && (
                               <View style={styles.scoreBox}>
                                 <Text style={styles.scoreValue}>{test.score.toFixed(0)}%</Text>
                               </View>
@@ -857,7 +869,236 @@ const physicalImageUrl = `https://image.pollinations.ai/prompt/${encodeURICompon
           )}
         </View>
 
-        {/* Health Trend Analysis & ML Insights */}
+        {/* ──────────────────────────────────────────────────────────────
+          EQ / IQ ASSESSMENT RESULTS — always visible
+        ───────────────────────────────────────────────────────────── */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <MaterialCommunityIcons name="brain" size={iconSizes.md} color={colors.eq} />
+            <Text style={styles.sectionTitle}>EQ & IQ Assessment Results</Text>
+          </View>
+
+          {testResults.filter(r => r.test_type === 'eq' || r.test_type === 'iq').length > 0 ? (
+            testResults
+              .filter(r => r.test_type === 'eq' || r.test_type === 'iq')
+              .map((test, idx) => (
+                <View key={idx} style={styles.assessmentCard}>
+                  <View style={styles.assessmentCardLeft}>
+                    <View style={[styles.assessmentIcon, {
+                      backgroundColor: test.test_type === 'eq' ? colors.eq + '15' : colors.iq + '15'
+                    }]}>
+                      <MaterialCommunityIcons
+                        name={test.test_type === 'eq' ? 'brain' : 'lightbulb-on'}
+                        size={28}
+                        color={test.test_type === 'eq' ? colors.eq : colors.iq}
+                      />
+                    </View>
+                    <View style={styles.assessmentInfo}>
+                      <Text style={styles.assessmentType}>
+                        {test.test_type === 'eq' ? 'Emotional Intelligence (EQ)' : 'Intelligence Quotient (IQ)'}
+                      </Text>
+                      <Text style={styles.assessmentDate}>
+                        {new Date(test.test_date || test.created_at).toLocaleDateString('en-IN', {
+                          day: 'numeric', month: 'short', year: 'numeric'
+                        })}
+                      </Text>
+                    </View>
+                  </View>
+                  {test.score != null ? (
+                    <View style={[styles.assessmentScore, {
+                      backgroundColor: test.score >= 70 ? colors.success + '15' :
+                        test.score >= 50 ? colors.warning + '15' : colors.error + '15'
+                    }]}>
+                      <Text style={[styles.assessmentScoreValue, {
+                        color: test.score >= 70 ? colors.success :
+                          test.score >= 50 ? colors.warning : colors.error
+                      }]}>
+                        {test.score.toFixed(0)}%
+                      </Text>
+                      <Text style={styles.assessmentScoreLabel}>
+                        {test.score >= 70 ? 'Good' : test.score >= 50 ? 'Fair' : 'Low'}
+                      </Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.noScoreText}>Pending</Text>
+                  )}
+                </View>
+              ))
+          ) : (
+            <View style={styles.emptyState}>
+              <MaterialCommunityIcons name="clipboard-text-outline" size={48} color={colors.textTertiary} />
+              <Text style={styles.emptyText}>No EQ/IQ assessments yet</Text>
+              <Text style={styles.emptySubText}>Results will appear here once your child completes their assessments</Text>
+            </View>
+          )}
+        </View>
+
+        {/* ──────────────────────────────────────────────────────────────
+          SYMPTOM CHECKER FEATURE
+        ───────────────────────────────────────────────────────────── */}
+        <View style={styles.section}>
+          <TouchableOpacity
+            style={styles.symptomCheckerToggle}
+            onPress={() => {
+              setShowSymptomChecker(v => !v);
+              setSymptomResult(null);
+              setSelectedSymptoms([]);
+              setSymptomNotes('');
+            }}
+            activeOpacity={0.8}
+          >
+            <View style={styles.symptomCheckerToggleLeft}>
+              <View style={styles.symptomCheckerIcon}>
+                <Ionicons name="medical" size={22} color={colors.white} />
+              </View>
+              <View>
+                <Text style={styles.symptomCheckerToggleTitle}>Symptom Checker</Text>
+                <Text style={styles.symptomCheckerToggleSub}>Get personalised wellness advice</Text>
+              </View>
+            </View>
+            <Ionicons
+              name={showSymptomChecker ? 'chevron-up' : 'chevron-down'}
+              size={20}
+              color={colors.primary}
+            />
+          </TouchableOpacity>
+
+          {showSymptomChecker && (
+            <View style={styles.symptomCheckerBody}>
+              <Text style={styles.symptomSelectLabel}>Select your child's symptoms:</Text>
+
+              {/* Symptom chips */}
+              <View style={styles.symptomChipsGrid}>
+                {[
+                  'Stress', 'Fatigue', 'Anxiety', 'Low Appetite',
+                  'Headache', 'Irritability', 'Difficulty Concentrating',
+                  'Social Withdrawal', 'Sadness', 'Stomach Pain'
+                ].map(symptom => {
+                  const isSelected = selectedSymptoms.includes(symptom.toLowerCase());
+                  return (
+                    <TouchableOpacity
+                      key={symptom}
+                      style={[styles.symptomChip, isSelected && styles.symptomChipSelected]}
+                      onPress={() => {
+                        const key = symptom.toLowerCase();
+                        setSelectedSymptoms(prev =>
+                          isSelected ? prev.filter(s => s !== key) : [...prev, key]
+                        );
+                        setSymptomResult(null);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.symptomChipText, isSelected && styles.symptomChipTextSelected]}>
+                        {symptom}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Get Suggestions button */}
+              <TouchableOpacity
+                style={[
+                  styles.symptomSubmitBtn,
+                  (selectedSymptoms.length === 0 || symptomLoading) && styles.symptomSubmitBtnDisabled
+                ]}
+                onPress={async () => {
+                  if (selectedSymptoms.length === 0) {
+                    Alert.alert('Select Symptoms', 'Please select at least one symptom.');
+                    return;
+                  }
+                  setSymptomLoading(true);
+                  setSymptomResult(null);
+                  try {
+                    const res = await parentAPI.checkSymptoms(selectedSymptoms, symptomNotes);
+                    setSymptomResult(res.data);
+                  } catch (e) {
+                    Alert.alert('Error', 'Could not get suggestions. Please try again.');
+                  } finally {
+                    setSymptomLoading(false);
+                  }
+                }}
+                disabled={selectedSymptoms.length === 0 || symptomLoading}
+                activeOpacity={0.8}
+              >
+                {symptomLoading
+                  ? <ActivityIndicator color={colors.white} />
+                  : <>
+                      <Ionicons name="sparkles" size={18} color={colors.white} />
+                      <Text style={styles.symptomSubmitText}>Get AI Suggestions</Text>
+                    </>
+                }
+              </TouchableOpacity>
+
+              {/* Suggestion Results */}
+              {symptomResult && (
+                <View style={styles.symptomResults}>
+                  {/* Summary */}
+                  <View style={[styles.symptomSummaryCard, {
+                    borderLeftColor:
+                      symptomResult.urgency === 'high' ? colors.error :
+                      symptomResult.urgency === 'medium' ? colors.warning : colors.success
+                  }]}>
+                    <Text style={styles.symptomSummaryText}>{symptomResult.summary}</Text>
+                    <View style={[styles.urgencyBadge, {
+                      backgroundColor:
+                        symptomResult.urgency === 'high' ? colors.error + '20' :
+                        symptomResult.urgency === 'medium' ? colors.warning + '20' : colors.success + '20'
+                    }]}>
+                      <Text style={[styles.urgencyText, {
+                        color:
+                          symptomResult.urgency === 'high' ? colors.error :
+                          symptomResult.urgency === 'medium' ? colors.warning : colors.success
+                      }]}>
+                        {symptomResult.urgency?.toUpperCase()} URGENCY
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Home Remedies */}
+                  <View style={styles.suggestionCategory}>
+                    <View style={styles.suggestionCategoryHeader}>
+                      <Text style={styles.suggestionCategoryIcon}>🏠</Text>
+                      <Text style={styles.suggestionCategoryTitle}>Home Remedies</Text>
+                    </View>
+                    {(symptomResult.home_remedies || []).map((item, i) => (
+                      <View key={i} style={styles.suggestionItem}>
+                        <View style={styles.suggestionDot} />
+                        <Text style={styles.suggestionText}>{item}</Text>
+                      </View>
+                    ))}
+                  </View>
+
+                  {/* Emotional Support */}
+                  <View style={styles.suggestionCategory}>
+                    <View style={styles.suggestionCategoryHeader}>
+                      <Text style={styles.suggestionCategoryIcon}>💬</Text>
+                      <Text style={styles.suggestionCategoryTitle}>Emotional Support</Text>
+                    </View>
+                    {(symptomResult.emotional_support || []).map((item, i) => (
+                      <View key={i} style={styles.suggestionItem}>
+                        <View style={styles.suggestionDot} />
+                        <Text style={styles.suggestionText}>{item}</Text>
+                      </View>
+                    ))}
+                  </View>
+
+                  {/* Professional Consultation */}
+                  {symptomResult.consult_professional && (
+                    <View style={styles.professionalAlert}>
+                      <Ionicons name="alert-circle" size={20} color={colors.error} />
+                      <View style={styles.professionalAlertText}>
+                        <Text style={styles.professionalAlertTitle}>Consult a Professional</Text>
+                        <Text style={styles.professionalAlertBody}>{symptomResult.professional_note}</Text>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              )}
+            </View>
+          )}
+        </View>
+
         {trendInsights && trendInsights.chartData && (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
@@ -1454,4 +1695,261 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontStyle: 'italic',
   },
+
+  // ─── EQ/IQ Assessment Cards ──────────────────────────────────────────────
+  assessmentCard: {
+    ...card,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+  },
+  assessmentCardLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  assessmentIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: borderRadius.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: spacing.md,
+  },
+  assessmentInfo: {
+    flex: 1,
+  },
+  assessmentType: {
+    ...typography.body,
+    color: colors.textPrimary,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  assessmentDate: {
+    ...typography.caption,
+    color: colors.textTertiary,
+  },
+  assessmentScore: {
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.md,
+    minWidth: 64,
+  },
+  assessmentScoreValue: {
+    ...typography.h2,
+    fontWeight: '700',
+  },
+  assessmentScoreLabel: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  noScoreText: {
+    ...typography.caption,
+    color: colors.textTertiary,
+    fontStyle: 'italic',
+  },
+  emptySubText: {
+    ...typography.caption,
+    color: colors.textTertiary,
+    textAlign: 'center',
+    marginTop: spacing.xs,
+    lineHeight: 18,
+  },
+
+  // ─── Symptom Checker ─────────────────────────────────────────────────────
+  symptomCheckerToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: spacing.lg,
+    backgroundColor: colors.surface,
+    borderRadius: borderRadius.lg,
+    borderWidth: 1.5,
+    borderColor: colors.primary + '30',
+    ...shadows.sm,
+  },
+  symptomCheckerToggleLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  symptomCheckerIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: borderRadius.md,
+    backgroundColor: colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  symptomCheckerToggleTitle: {
+    ...typography.h4,
+    color: colors.textPrimary,
+    fontWeight: '600',
+  },
+  symptomCheckerToggleSub: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  symptomCheckerBody: {
+    marginTop: spacing.md,
+    padding: spacing.lg,
+    backgroundColor: colors.background,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.divider,
+  },
+  symptomSelectLabel: {
+    ...typography.body,
+    color: colors.textPrimary,
+    fontWeight: '600',
+    marginBottom: spacing.md,
+  },
+  symptomChipsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+  symptomChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.full,
+    borderWidth: 1.5,
+    borderColor: colors.divider,
+    backgroundColor: colors.surface,
+  },
+  symptomChipSelected: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary + '15',
+  },
+  symptomChipText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    fontWeight: '500',
+  },
+  symptomChipTextSelected: {
+    color: colors.primary,
+    fontWeight: '700',
+  },
+  symptomSubmitBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.primary,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.xl,
+    borderRadius: borderRadius.md,
+    ...shadows.sm,
+  },
+  symptomSubmitBtnDisabled: {
+    opacity: 0.5,
+  },
+  symptomSubmitText: {
+    ...typography.body,
+    color: colors.white,
+    fontWeight: '600',
+  },
+
+  // ─── Symptom Results ─────────────────────────────────────────────────────
+  symptomResults: {
+    marginTop: spacing.lg,
+  },
+  symptomSummaryCard: {
+    backgroundColor: colors.surface,
+    borderRadius: borderRadius.md,
+    padding: spacing.lg,
+    borderLeftWidth: 4,
+    marginBottom: spacing.md,
+    ...shadows.sm,
+  },
+  symptomSummaryText: {
+    ...typography.body,
+    color: colors.textPrimary,
+    lineHeight: 22,
+    marginBottom: spacing.sm,
+  },
+  urgencyBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 4,
+    borderRadius: borderRadius.full,
+  },
+  urgencyText: {
+    ...typography.caption,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  suggestionCategory: {
+    backgroundColor: colors.surface,
+    borderRadius: borderRadius.md,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+    ...shadows.sm,
+  },
+  suggestionCategoryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  suggestionCategoryIcon: {
+    fontSize: 20,
+  },
+  suggestionCategoryTitle: {
+    ...typography.h4,
+    color: colors.textPrimary,
+    fontWeight: '600',
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  suggestionDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.primary,
+    marginTop: 7,
+    flexShrink: 0,
+  },
+  suggestionText: {
+    ...typography.body,
+    color: colors.textSecondary,
+    flex: 1,
+    lineHeight: 20,
+  },
+  professionalAlert: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.md,
+    backgroundColor: colors.error + '10',
+    borderRadius: borderRadius.md,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.error + '30',
+    marginBottom: spacing.md,
+  },
+  professionalAlertText: {
+    flex: 1,
+  },
+  professionalAlertTitle: {
+    ...typography.body,
+    color: colors.error,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  professionalAlertBody: {
+    ...typography.bodySmall,
+    color: colors.textSecondary,
+    lineHeight: 18,
+  },
 });
+
